@@ -44,6 +44,8 @@ button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line
 .acts{display:flex;flex-direction:column;gap:8px;justify-content:center;padding:14px}
 .empty{text-align:center;color:var(--muted);padding:32px}
 .note{background:var(--panel);border:1px solid var(--warn);border-radius:8px;padding:8px 14px;margin-bottom:16px}.note[hidden]{display:none}
+.auth{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px;color:var(--muted)}
+body.out .shift,body.out #summary,body.out #f,body.out #list{display:none}
 .shift{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.band small{font:600 14px Barlow,system-ui,sans-serif}.paused .time{opacity:.55}
 @media (max-width:640px){.card{grid-template-columns:1fr}.band{flex-direction:row;justify-content:flex-start;padding:10px 14px}.acts{flex-direction:row;flex-wrap:wrap;padding:0 18px 14px}.time{font-size:38px}}
 </style>
@@ -53,6 +55,7 @@ button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line
 <h1>Control de resurtido</h1>
 <p class="sub">Registra cada pieza, inicia el turno y el semáforo te dice cuándo toca llevar material.</p>
 
+<div class="auth" id="auth"></div>
 <div class="note" id="note" role="status" hidden></div>
 <div class="shift"><button id="startAll">Iniciar turno</button><button class="ghost" id="pauseAll">Pausar turno</button></div>
 <div class="summary" id="summary" aria-live="polite"></div>
@@ -71,12 +74,15 @@ button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line
 <div class="list" id="list"></div>
 </main>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
 (function(){
 var KEY='resurtido-v1', items=[], col=null, loaded=false;
 function setNote(t){var n=document.getElementById('note');n.textContent=t;n.hidden=!t}
 function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(items))}catch(e){}}
-function fail(){setNote('No se pudo guardar el cambio. Puede que tu cuenta solo tenga permiso de lectura.')}
+function fail(){setNote('No se pudo guardar el cambio. Revisa tu conexión o las reglas de Firestore.')}
 function put(it){
   if(col){col.doc(it.id).set(it).catch(fail)}
   else{items=items.filter(function(i){return i.id!==it.id}).concat(it);saveLocal();render()}
@@ -160,23 +166,39 @@ document.getElementById('list').addEventListener('click',function(e){
   else if(it&&b.dataset.a==='t'){put(setRun(it,!norm(it).running))}
   else if(it){put(Object.assign({},norm(it),{elapsed:0,since:Date.now()}))}
 });
-function useLocal(msg){
-  try{items=JSON.parse(localStorage.getItem(KEY)||'[]')||[]}catch(e){items=[]}
-  loaded=true;setNote(msg);render();
-}
-var tm=setTimeout(function(){setNote('Aún no se logra conectar con el tablero compartido. Los datos pueden no estar al día.')},10000);
 function setAll(run){items.slice().forEach(function(it){if(!!norm(it).running!==run)put(setRun(it,run))})}
 document.getElementById('startAll').addEventListener('click',function(){setAll(true)});
 document.getElementById('pauseAll').addEventListener('click',function(){setAll(false)});
 render();setInterval(render,1000);
-(window.claude&&window.claude.use?window.claude.use('db'):Promise.resolve(null)).then(function(db){
-  if(!db){clearTimeout(tm);useLocal('Modo local: aquí los datos no se comparten con otras personas.');return}
-  col=db.collection('items');
-  col.onSnapshot(function(s){
-    clearTimeout(tm);loaded=true;setNote('');
+
+var firebaseConfig={
+  apiKey:"AIzaSyCVIfWguXowa0ZhTJmB7kmR2_0Vo-KS1Xg",
+  authDomain:"tablero-resurtido.firebaseapp.com",
+  projectId:"tablero-resurtido",
+  storageBucket:"tablero-resurtido.firebasestorage.app",
+  messagingSenderId:"530625994954",
+  appId:"1:530625994954:web:f88a382d4889570e049433"
+};
+firebase.initializeApp(firebaseConfig);
+var auth=firebase.auth(), fs=firebase.firestore(), unsub=null;
+
+function showBar(){document.getElementById('auth').innerHTML=''}
+
+auth.onAuthStateChanged(function(u){
+  if(unsub){unsub();unsub=null}
+  col=null;items=[];loaded=false;setNote('');
+  if(!u){auth.signInAnonymously().catch(function(e){loaded=true;setNote('No se pudo conectar ('+e.code+'). Revisa que el acceso anónimo esté activado en Firebase.');render()});return}
+  document.body.classList.remove('out');showBar(u);
+  col=fs.collection('items');
+  unsub=col.onSnapshot(function(s){
+    loaded=true;setNote('');
     items=s.docs.map(function(d){return Object.assign({},d.data(),{id:d.id})});render();
-  },function(e){clearTimeout(tm);col=null;useLocal('No se pudo leer el tablero compartido.')});
-}).catch(function(){clearTimeout(tm);useLocal('Modo local: aquí los datos no se comparten con otras personas.')});
+  },function(e){
+    loaded=true;items=[];
+    setNote(e.code==='permission-denied'?'No hay permiso para leer el tablero. Revisa las reglas de Firestore.':'No se pudo leer el tablero: '+e.message);
+    render();
+  });
+});
 })();
 </script>
 </body>
