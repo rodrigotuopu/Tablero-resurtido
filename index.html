@@ -48,19 +48,37 @@ button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line
 body.out .shift,body.out #summary,body.out #f,body.out #list{display:none}
 .shift{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}.band small{font:600 14px Barlow,system-ui,sans-serif}.paused .time{opacity:.55}
 @media (max-width:640px){.card{grid-template-columns:1fr}.band{flex-direction:row;justify-content:flex-start;padding:10px 14px}.acts{flex-direction:row;flex-wrap:wrap;padding:0 18px 14px}.time{font-size:38px}}
+
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+.tabs a{display:flex;align-items:center;padding:10px 18px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);text-decoration:none;font:700 20px "Barlow Condensed",Impact,sans-serif}
+.tabs a.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.d{display:inline-block;width:11px;height:11px;border-radius:50%;margin-left:8px;background:var(--line)}
+.d.s-ok{background:var(--ok)}.d.s-warn{background:var(--warn)}.d.s-bad{background:var(--bad)}
+form .wide{grid-column:1/-1}
+select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:9px 10px;width:100%}
+.chk{flex-direction:row;align-items:center;gap:8px}.chk input{width:auto}
+.mats{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-bottom:24px}
+.mats summary{cursor:pointer;font-weight:700;font-size:17px}
+.mats form{border:0;padding:12px 0 0;margin:0 0 10px;background:transparent}
+.mats textarea{font:inherit;font-size:15px;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:9px 10px;width:100%;min-height:90px}
+.mrow{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);padding:8px 0}
+.mrow button{padding:6px 12px;font-size:14px}
+.bulk{display:grid;gap:8px;margin:10px 0 14px}
 </style>
 </head>
 <body>
 <main>
-<h1>Control de resurtido</h1>
+<h1 id="h1">Control de resurtido</h1>
 <p class="sub">Registra cada pieza, inicia el turno y el semáforo te dice cuándo toca llevar material.</p>
 
+<nav class="tabs" id="tabs" aria-label="Áreas"></nav>
 <div class="auth" id="auth"></div>
 <div class="note" id="note" role="status" hidden></div>
 <div class="shift"><button id="startAll">Iniciar turno</button><button class="ghost" id="pauseAll">Pausar turno</button></div>
 <div class="summary" id="summary" aria-live="polite"></div>
 
 <form id="f">
+<label class="wide">Material de la lista<select id="mat"><option value="">— Elegir de la lista —</option></select></label>
 <label>Nombre de la pieza<input name="name" required placeholder="Soporte frontal"></label>
 <label>Número de parte<input name="part" required placeholder="PN-10234"></label>
 <label>Tiempo de ciclo (seg/pieza)<input name="cycle" type="number" min="0.1" step="any" required placeholder="45"></label>
@@ -68,8 +86,27 @@ body.out .shift,body.out #summary,body.out #f,body.out #list{display:none}
 <label>Piezas por caja<input name="ppb" type="number" min="1" step="1" required placeholder="50"></label>
 <label>Punto de reorden<input name="reorder" type="number" min="0" step="1" required placeholder="2"></label>
 <label>Reordenar cuando queden<select name="unit"><option value="cajas">Cajas</option><option value="piezas">Piezas</option></select></label>
+<label class="chk"><input type="checkbox" name="save"> Guardar en la lista de materiales</label>
 <button type="submit">Agregar pieza</button>
 </form>
+
+<details class="mats" id="mats">
+<summary>Lista de materiales de esta área (<span id="mcount">0</span>)</summary>
+<form id="mf">
+<label>Nombre del material<input name="name" required placeholder="Soporte frontal"></label>
+<label>Número de parte<input name="part" required placeholder="PN-10234"></label>
+<label>Ciclo (seg/pieza), opcional<input name="cycle" type="number" min="0.1" step="any"></label>
+<label>Piezas por caja, opcional<input name="ppb" type="number" min="1" step="1"></label>
+<label>Punto de reorden, opcional<input name="reorder" type="number" min="0" step="1"></label>
+<label>Unidad del reorden<select name="unit"><option value="cajas">Cajas</option><option value="piezas">Piezas</option></select></label>
+<button type="submit">Guardar material</button>
+</form>
+<div class="bulk">
+<label>Agregar varios a la vez (uno por línea: Nombre, Número de parte; también sirve pegar dos columnas de Excel)<textarea id="bulk" placeholder="Soporte frontal, PN-10234&#10;Clip lateral, PN-20456"></textarea></label>
+<button type="button" id="bulkBtn" class="ghost">Agregar lista</button>
+</div>
+<div id="mlist"></div>
+</details>
 
 <div class="list" id="list"></div>
 </main>
@@ -79,11 +116,18 @@ body.out .shift,body.out #summary,body.out #f,body.out #list{display:none}
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script>
 (function(){
-var KEY='resurtido-v1', items=[], col=null, loaded=false;
+var KEY='resurtido-v1', items=[], col=null, loaded=false, mats=[], matCol=null, matUnsub=null;
+var AREAS=[['doortrim','Doortrim'],['everest','Everest DT'],['tst','TST'],['console','Console']];
+function curArea(){var h=location.hash.slice(1);return AREAS.some(function(a){return a[0]===h})?h:'doortrim'}
+var area=curArea();
+function areaName(){return AREAS.filter(function(a){return a[0]===area})[0][1]}
+function inArea(it){return (it.area||'doortrim')===area}
+function num(v){var n=parseFloat(v);return isNaN(n)?null:n}
 function setNote(t){var n=document.getElementById('note');n.textContent=t;n.hidden=!t}
 function saveLocal(){try{localStorage.setItem(KEY,JSON.stringify(items))}catch(e){}}
 function fail(){setNote('No se pudo guardar el cambio. Revisa tu conexión o las reglas de Firestore.')}
 function put(it){
+  it=Object.assign({},it,{area:it.area||'doortrim'});
   if(col){col.doc(it.id).set(it).catch(fail)}
   else{items=items.filter(function(i){return i.id!==it.id}).concat(it);saveLocal();render()}
 }
@@ -125,7 +169,17 @@ function calc(it,now){
 var LABEL={ok:'Surtido',warn:'Reordenar',bad:'Agotado'};
 
 function render(){
-  var now=Date.now(), rows=items.map(function(it){return {it:it,c:calc(it,now)}});
+  var now=Date.now();
+  AREAS.forEach(function(a){
+    var st='';
+    items.forEach(function(it){
+      if((it.area||'doortrim')!==a[0])return;
+      var x=calc(it,now).st;
+      if(x==='bad')st='bad';else if(x==='warn'&&st!=='bad')st='warn';else if(!st)st='ok';
+    });
+    var d=document.getElementById('d-'+a[0]);if(d)d.className='d'+(st?' s-'+st:'');
+  });
+  var rows=items.filter(inArea).map(function(it){return {it:it,c:calc(it,now)}});
   rows.sort(function(a,b){return a.c.rem-b.c.rem});
   var n={ok:0,warn:0,bad:0};rows.forEach(function(r){n[r.c.st]++});
   document.getElementById('summary').innerHTML=
@@ -133,7 +187,7 @@ function render(){
     '<div class="pill"><span class="dot" style="background:var(--warn)"></span>'+n.warn+' por reordenar</div>'+
     '<div class="pill"><span class="dot" style="background:var(--bad)"></span>'+n.bad+' agotadas</div>';
   var list=document.getElementById('list');
-  if(!rows.length){list.innerHTML='<div class="empty">'+(loaded?'Aún no hay piezas. Agrega la primera con el formulario.':'Cargando tablero…')+'</div>';return}
+  if(!rows.length){list.innerHTML='<div class="empty">'+(loaded?'Aún no hay piezas en '+areaName()+'. Agrega la primera con el formulario.':'Cargando tablero…')+'</div>';return}
   list.innerHTML=rows.map(function(r){
     var it=r.it,c=r.c,pct=c.total?Math.round(c.rem/c.total*100):0;
     var line=c.st==='bad'?'Sin material. Resurte y reinicia el conteo.':
@@ -154,8 +208,10 @@ function render(){
 document.getElementById('f').addEventListener('submit',function(e){
   e.preventDefault();
   var f=e.target,v=function(k){return f.elements[k].value};
-  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),name:v('name').trim(),part:v('part').trim(),
-    cycle:parseFloat(v('cycle')),boxes:parseInt(v('boxes'),10),ppb:parseInt(v('ppb'),10),reorder:parseInt(v('reorder'),10),unit:v('unit'),elapsed:0,running:false,since:null});
+  var from=document.getElementById('mat').value;
+  var o={name:v('name').trim(),part:v('part').trim(),cycle:parseFloat(v('cycle')),boxes:parseInt(v('boxes'),10),ppb:parseInt(v('ppb'),10),reorder:parseInt(v('reorder'),10),unit:v('unit')};
+  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),area:area,name:o.name,part:o.part,cycle:o.cycle,boxes:o.boxes,ppb:o.ppb,reorder:o.reorder,unit:o.unit,elapsed:0,running:false,since:null});
+  if(f.elements.save.checked&&!from)saveMat(o);
   f.reset();
 });
 document.getElementById('list').addEventListener('click',function(e){
@@ -166,10 +222,74 @@ document.getElementById('list').addEventListener('click',function(e){
   else if(it&&b.dataset.a==='t'){put(setRun(it,!norm(it).running))}
   else if(it){put(Object.assign({},norm(it),{elapsed:0,since:Date.now()}))}
 });
-function setAll(run){items.slice().forEach(function(it){if(!!norm(it).running!==run)put(setRun(it,run))})}
+function setAll(run){items.filter(inArea).forEach(function(it){if(!!norm(it).running!==run)put(setRun(it,run))})}
 document.getElementById('startAll').addEventListener('click',function(){setAll(true)});
 document.getElementById('pauseAll').addEventListener('click',function(){setAll(false)});
-render();setInterval(render,1000);
+function areaMats(){return mats.filter(function(m){return m.area===area}).sort(function(a,b){return a.name.localeCompare(b.name,'es')})}
+function renderMats(){
+  var ms=areaMats(),sel=document.getElementById('mat'),prev=sel.value;
+  sel.innerHTML='<option value="">'+(ms.length?'— Elegir de la lista —':'— Aún no hay materiales en la lista —')+'</option>'+
+    ms.map(function(m){return '<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+esc(m.part)+'</option>'}).join('');
+  if(ms.some(function(m){return m.id===prev}))sel.value=prev;
+  document.getElementById('mcount').textContent=ms.length;
+  document.getElementById('mlist').innerHTML=ms.length?ms.map(function(m){
+    return '<div class="mrow"><span><b>'+esc(m.name)+'</b> · '+esc(m.part)+(m.cycle?' · ciclo '+m.cycle+' s':'')+(m.ppb?' · '+m.ppb+' pzas/caja':'')+'</span><button class="ghost" data-m="'+esc(m.id)+'">Quitar</button></div>';
+  }).join(''):'<p class="meta">Sin materiales todavía en '+esc(areaName())+'.</p>';
+}
+function saveMat(o){
+  var ex=mats.filter(function(m){return m.area===area&&m.part.toLowerCase()===o.part.toLowerCase()})[0];
+  var id=ex?ex.id:Date.now()+'-'+Math.random().toString(36).slice(2,6);
+  var doc={id:id,area:area,name:o.name,part:o.part,cycle:num(o.cycle),ppb:num(o.ppb),reorder:num(o.reorder),unit:o.unit||'cajas'};
+  if(!matCol){setNote('Aún no hay conexión con la lista de materiales.');return Promise.resolve()}
+  return matCol.doc(id).set(doc).catch(fail);
+}
+document.getElementById('mf').addEventListener('submit',function(e){
+  e.preventDefault();var f=e.target,v=function(k){return f.elements[k].value};
+  saveMat({name:v('name').trim(),part:v('part').trim(),cycle:v('cycle'),ppb:v('ppb'),reorder:v('reorder'),unit:v('unit')});
+  f.reset();
+});
+document.getElementById('bulkBtn').addEventListener('click',function(){
+  var ta=document.getElementById('bulk'),seen={},ok=0,bad=0;
+  ta.value.split(/\r?\n/).forEach(function(line){
+    if(!line.trim())return;
+    var p=line.split(/\t|;|,/).map(function(x){return x.trim()});
+    if(p.length<2||!p[0]||!p[1]){bad++;return}
+    var k=p[1].toLowerCase();if(seen[k])return;seen[k]=1;
+    saveMat({name:p[0],part:p[1]});ok++;
+  });
+  ta.value='';
+  setNote(ok+' material(es) agregados a '+areaName()+(bad?'. '+bad+' línea(s) no tenían nombre y número de parte, revísalas.':'.'));
+  setTimeout(function(){if(document.getElementById('note').textContent.indexOf('material(es)')===0)setNote('')},6000);
+});
+document.getElementById('mlist').addEventListener('click',function(e){
+  var b=e.target.closest('button');if(!b||!matCol)return;
+  matCol.doc(b.dataset.m).delete().catch(fail);
+});
+document.getElementById('mat').addEventListener('change',function(e){
+  var m=mats.filter(function(x){return x.id===e.target.value})[0];if(!m)return;
+  var f=document.getElementById('f').elements;
+  f.name.value=m.name;f.part.value=m.part;
+  if(m.cycle)f.cycle.value=m.cycle;
+  if(m.ppb)f.ppb.value=m.ppb;
+  if(m.reorder!=null)f.reorder.value=m.reorder;
+  if(m.unit)f.unit.value=m.unit;
+});
+document.getElementById('tabs').innerHTML=AREAS.map(function(a){return '<a href="#'+a[0]+'" data-a="'+a[0]+'">'+a[1]+'<span class="d" id="d-'+a[0]+'"></span></a>'}).join('');
+function areaUI(){
+  area=curArea();
+  [].forEach.call(document.querySelectorAll('#tabs a'),function(t){
+    var on=t.dataset.a===area;t.className=on?'on':'';
+    if(on)t.setAttribute('aria-current','page');else t.removeAttribute('aria-current');
+  });
+  document.getElementById('h1').textContent='Resurtido · '+areaName();
+  document.title='Resurtido · '+areaName();
+  document.getElementById('startAll').textContent='Iniciar turno ('+areaName()+')';
+  document.getElementById('pauseAll').textContent='Pausar turno ('+areaName()+')';
+  document.getElementById('f').reset();
+  renderMats();render();
+}
+window.addEventListener('hashchange',areaUI);
+areaUI();setInterval(render,1000);
 
 var firebaseConfig={
   apiKey:"AIzaSyCVIfWguXowa0ZhTJmB7kmR2_0Vo-KS1Xg",
@@ -186,10 +306,17 @@ function showBar(){document.getElementById('auth').innerHTML=''}
 
 auth.onAuthStateChanged(function(u){
   if(unsub){unsub();unsub=null}
-  col=null;items=[];loaded=false;setNote('');
+  if(matUnsub){matUnsub();matUnsub=null}
+  col=null;matCol=null;items=[];mats=[];loaded=false;setNote('');
   if(!u){auth.signInAnonymously().catch(function(e){loaded=true;setNote('No se pudo conectar ('+e.code+'). Revisa que el acceso anónimo esté activado en Firebase.');render()});return}
   document.body.classList.remove('out');showBar(u);
   col=fs.collection('items');
+  matCol=fs.collection('materiales');
+  matUnsub=matCol.onSnapshot(function(s){
+    mats=s.docs.map(function(d){return Object.assign({},d.data(),{id:d.id})});renderMats();
+  },function(e){
+    setNote(e.code==='permission-denied'?'Falta actualizar las reglas de Firestore para la lista de materiales.':'No se pudo leer la lista de materiales: '+e.message);
+  });
   unsub=col.onSnapshot(function(s){
     loaded=true;setNote('');
     items=s.docs.map(function(d){return Object.assign({},d.data(),{id:d.id})});render();
