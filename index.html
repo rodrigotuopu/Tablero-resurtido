@@ -117,7 +117,7 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <script>
 (function(){
 var KEY='resurtido-v1', items=[], col=null, loaded=false, mats=[], matCol=null, matUnsub=null;
-var AREAS=[['doortrim','Doortrim'],['everest','Everest DT'],['tst','TST'],['console','Console']];
+var AREAS=[['doortrim','Doortrim'],['beltline','Beltline EVE'],['tst','TST'],['console','Console']];
 function curArea(){var h=location.hash.slice(1);return AREAS.some(function(a){return a[0]===h})?h:'doortrim'}
 var area=curArea();
 function areaName(){return AREAS.filter(function(a){return a[0]===area})[0][1]}
