@@ -64,6 +64,15 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 .mrow{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1px solid var(--line);padding:8px 0}
 .mrow button{padding:6px 12px;font-size:14px}
 .bulk{display:grid;gap:8px;margin:10px 0 14px}
+
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
+.modal[hidden]{display:none}
+.modal form{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:420px;width:100%;display:grid;gap:12px;margin:0}
+.modal h3{font:700 26px/1 "Barlow Condensed",Impact,sans-serif;margin:0}
+.modal p{margin:0;color:var(--muted);font-size:14px}
+.modal .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.modal .row{display:flex;gap:10px}.modal .row button{flex:1}
+.err{color:var(--bad);font-size:14px;min-height:18px}
 </style>
 </head>
 <body>
@@ -82,10 +91,12 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <label>Nombre de la pieza<input name="name" required placeholder="Soporte frontal"></label>
 <label>Número de parte<input name="part" required placeholder="PN-10234"></label>
 <label>Tiempo de ciclo (seg/pieza)<input name="cycle" type="number" min="0.1" step="any" required placeholder="45"></label>
-<label>Cantidad de cajas<input name="boxes" type="number" min="1" step="1" required placeholder="10"></label>
+<label>Cajas por resurtido (estándar)<input name="boxes" type="number" min="1" step="1" required placeholder="10"></label>
 <label>Piezas por caja<input name="ppb" type="number" min="1" step="1" required placeholder="50"></label>
 <label>Punto de reorden<input name="reorder" type="number" min="0" step="1" required placeholder="2"></label>
 <label>Reordenar cuando queden<select name="unit"><option value="cajas">Cajas</option><option value="piezas">Piezas</option></select></label>
+<label>Cajas disponibles ahora (vacío = completo)<input name="availBoxes" type="number" min="0" step="1"></label>
+<label>Piezas sueltas disponibles ahora<input name="availLoose" type="number" min="0" step="1"></label>
 <label class="chk"><input type="checkbox" name="save"> Guardar en la lista de materiales</label>
 <button type="submit">Agregar pieza</button>
 </form>
@@ -110,6 +121,19 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 
 <div class="list" id="list"></div>
 </main>
+<div class="modal" id="rm" hidden>
+<form id="rf">
+<h3 id="rtitle">Resurtido</h3>
+<p id="rinfo"></p>
+<div class="two">
+<label>Cajas que llegaron<input name="rcajas" type="number" min="0" step="1"></label>
+<label>Piezas sueltas<input name="rloose" type="number" min="0" step="1"></label>
+</div>
+<label>Cómo registrarlo<select name="rmode"><option value="add">Sumar a lo que queda</option><option value="set">Reemplazar: esto es lo que hay ahora</option></select></label>
+<div class="err" id="rerr" role="alert"></div>
+<div class="row"><button type="submit">Confirmar</button><button type="button" class="ghost" id="rcancel">Cancelar</button></div>
+</form>
+</div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
@@ -117,7 +141,7 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <script>
 (function(){
 var KEY='resurtido-v1', items=[], col=null, loaded=false, mats=[], matCol=null, matUnsub=null;
-var AREAS=[['doortrim','Doortrim'],['everest','Beltline EVE'],['tst','TST'],['console','Console']];
+var AREAS=[['doortrim','Doortrim'],['everest','Beltline Eve'],['tst','TST'],['console','Console']];
 function curArea(){var h=location.hash.slice(1);return AREAS.some(function(a){return a[0]===h})?h:'doortrim'}
 var area=curArea();
 function areaName(){return AREAS.filter(function(a){return a[0]===area})[0][1]}
@@ -158,9 +182,11 @@ function used(it,now){
   var n=norm(it);
   return ((n.elapsed||0)+(n.running?now-n.since:0))/1000;
 }
+function pcs(c,it){return Math.max(0,Math.ceil(c.rem/it.cycle-1e-9))}
 function calc(it,now){
-  var boxSec=it.ppb*it.cycle, total=it.boxes*boxSec;
-  var rem=Math.max(0,total-used(it,now));
+  var boxSec=it.ppb*it.cycle, S0=it.stock0!=null?it.stock0:it.boxes*it.ppb;
+  var total=Math.max(S0,it.full||0)*it.cycle;
+  var rem=Math.max(0,S0*it.cycle-used(it,now));
   var left=Math.ceil(rem/boxSec-1e-9);
   var rs=(it.unit==='piezas'?it.reorder:it.reorder*it.ppb)*it.cycle;
   var st=rem<=0?'bad':(rem<=rs+1e-9?'warn':'ok');
@@ -198,7 +224,7 @@ function render(){
       '<div class="body"><h2 class="name">'+esc(it.name)+'</h2><p class="part">'+esc(it.part)+'</p>'+
       '<div class="time">'+fmt(c.rem)+'</div>'+
       '<div class="meta">'+line+'</div>'+
-      '<div class="meta">'+Math.max(0,c.left)+' de '+it.boxes+' cajas, '+Math.max(0,Math.ceil(c.rem/it.cycle-1e-9))+' pzas · '+it.ppb+' pzas/caja · ciclo '+it.cycle+' s · reorden a '+it.reorder+(it.unit==='piezas'?' piezas':' cajas')+'</div>'+
+      '<div class="meta">'+'Quedan '+pcs(c,it)+' pzas ('+Math.floor(pcs(c,it)/it.ppb)+' cajas'+(pcs(c,it)%it.ppb?' + '+(pcs(c,it)%it.ppb)+' pzas':'')+') · '+it.ppb+' pzas/caja · ciclo '+it.cycle+' s · reorden a '+it.reorder+(it.unit==='piezas'?' piezas':' cajas')+'</div>'+
       '<div class="bar"><i style="width:'+pct+'%"></i></div></div>'+
       '<div class="acts"><button data-a="t">'+(run?'Pausar':'Iniciar')+'</button><button class="ghost" data-a="r">Resurtido listo</button><button class="ghost" data-a="d">Eliminar</button></div>'+
       '</article>';
@@ -210,7 +236,9 @@ document.getElementById('f').addEventListener('submit',function(e){
   var f=e.target,v=function(k){return f.elements[k].value};
   var from=document.getElementById('mat').value;
   var o={name:v('name').trim(),part:v('part').trim(),cycle:parseFloat(v('cycle')),boxes:parseInt(v('boxes'),10),ppb:parseInt(v('ppb'),10),reorder:parseInt(v('reorder'),10),unit:v('unit')};
-  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),area:area,name:o.name,part:o.part,cycle:o.cycle,boxes:o.boxes,ppb:o.ppb,reorder:o.reorder,unit:o.unit,elapsed:0,running:false,since:null});
+  var ab=v('availBoxes'),al=v('availLoose'),full=o.boxes*o.ppb;
+  var stock=(ab===''&&al==='')?full:(parseInt(ab,10)||0)*o.ppb+(parseInt(al,10)||0);
+  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),area:area,name:o.name,part:o.part,cycle:o.cycle,boxes:o.boxes,ppb:o.ppb,reorder:o.reorder,unit:o.unit,stock0:stock,full:Math.max(stock,full),elapsed:0,running:false,since:null});
   if(f.elements.save.checked&&!from)saveMat(o);
   f.reset();
 });
@@ -220,11 +248,35 @@ document.getElementById('list').addEventListener('click',function(e){
   var it=items.filter(function(i){return i.id===id})[0];
   if(b.dataset.a==='d'){remove(id)}
   else if(it&&b.dataset.a==='t'){put(setRun(it,!norm(it).running))}
-  else if(it){put(Object.assign({},norm(it),{elapsed:0,since:Date.now()}))}
+  else if(it){openRestock(it)}
 });
 function setAll(run){items.filter(inArea).forEach(function(it){if(!!norm(it).running!==run)put(setRun(it,run))})}
 document.getElementById('startAll').addEventListener('click',function(){setAll(true)});
 document.getElementById('pauseAll').addEventListener('click',function(){setAll(false)});
+var rid=null;
+function openRestock(it){
+  var n=norm(it),p=pcs(calc(n,Date.now()),n),f=document.getElementById('rf').elements;
+  rid=it.id;
+  document.getElementById('rtitle').textContent='Resurtido · '+n.name;
+  document.getElementById('rinfo').textContent='Quedan ahora: '+p+' pzas ('+Math.floor(p/n.ppb)+' cajas'+(p%n.ppb?' + '+(p%n.ppb)+' pzas':'')+'). Resurtido estándar: '+n.boxes+' cajas.';
+  f.rcajas.value=n.boxes;f.rloose.value=0;f.rmode.value='add';
+  document.getElementById('rerr').textContent='';
+  document.getElementById('rm').hidden=false;f.rcajas.focus();
+}
+function closeRestock(){document.getElementById('rm').hidden=true;rid=null}
+document.getElementById('rcancel').addEventListener('click',closeRestock);
+document.getElementById('rm').addEventListener('click',function(e){if(e.target===this)closeRestock()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeRestock()});
+document.getElementById('rf').addEventListener('submit',function(e){
+  e.preventDefault();
+  var it=items.filter(function(i){return i.id===rid})[0];if(!it){closeRestock();return}
+  var f=e.target.elements,n=norm(it),mode=f.rmode.value;
+  var add=(parseInt(f.rcajas.value,10)||0)*n.ppb+(parseInt(f.rloose.value,10)||0);
+  if(mode==='add'&&add<=0){document.getElementById('rerr').textContent='Escribe cuántas cajas o piezas llegaron.';return}
+  var now=Date.now(),c=calc(n,now),ns=Math.round(((mode==='add'?c.rem/n.cycle:0)+add)*1000)/1000;
+  put(Object.assign({},n,{stock0:ns,full:Math.max(ns,n.boxes*n.ppb),elapsed:0,since:n.running?now:null}));
+  closeRestock();
+});
 function areaMats(){return mats.filter(function(m){return m.area===area}).sort(function(a,b){return a.name.localeCompare(b.name,'es')})}
 function renderMats(){
   var ms=areaMats(),sel=document.getElementById('mat'),prev=sel.value;
