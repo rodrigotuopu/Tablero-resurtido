@@ -67,7 +67,7 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:50}
 .modal[hidden]{display:none}
-.modal form{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:420px;width:100%;display:grid;gap:12px;margin:0}
+.modal form{max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;max-width:420px;width:100%;display:grid;gap:12px;margin:0}
 .modal h3{font:700 26px/1 "Barlow Condensed",Impact,sans-serif;margin:0}
 .modal p{margin:0;color:var(--muted);font-size:14px}
 .modal .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -135,6 +135,25 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 </form>
 </div>
 
+<div class="modal" id="em" hidden>
+<form id="ef">
+<h3>Editar pieza</h3>
+<label>Nombre de la pieza<input name="name" required></label>
+<label>Número de parte<input name="part" required></label>
+<div class="two">
+<label>Ciclo (seg/pieza)<input name="cycle" type="number" min="0.1" step="any" required></label>
+<label>Piezas por caja<input name="ppb" type="number" min="1" step="1" required></label>
+<label>Cajas por resurtido<input name="boxes" type="number" min="1" step="1" required></label>
+<label>Punto de reorden<input name="reorder" type="number" min="0" step="1" required></label>
+<label>Unidad del reorden<select name="unit"><option value="cajas">Cajas</option><option value="piezas">Piezas</option></select></label>
+<label>Área<select name="area" id="earea"></select></label>
+</div>
+<label>Piezas disponibles ahora<input name="avail" type="number" min="0" step="1" required></label>
+<p>Si no cambias las piezas disponibles, se conserva el inventario actual y solo se corrigen los demás datos.</p>
+<div class="err" id="eerr" role="alert"></div>
+<div class="row"><button type="submit">Guardar cambios</button><button type="button" class="ghost" id="ecancel">Cancelar</button></div>
+</form>
+</div>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
@@ -226,7 +245,7 @@ function render(){
       '<div class="meta">'+line+'</div>'+
       '<div class="meta">'+'Quedan '+pcs(c,it)+' pzas ('+Math.floor(pcs(c,it)/it.ppb)+' cajas'+(pcs(c,it)%it.ppb?' + '+(pcs(c,it)%it.ppb)+' pzas':'')+') · '+it.ppb+' pzas/caja · ciclo '+it.cycle+' s · reorden a '+it.reorder+(it.unit==='piezas'?' piezas':' cajas')+'</div>'+
       '<div class="bar"><i style="width:'+pct+'%"></i></div></div>'+
-      '<div class="acts"><button data-a="t">'+(run?'Pausar':'Iniciar')+'</button><button class="ghost" data-a="r">Resurtido listo</button><button class="ghost" data-a="d">Eliminar</button></div>'+
+      '<div class="acts"><button data-a="t">'+(run?'Pausar':'Iniciar')+'</button><button class="ghost" data-a="r">Resurtido listo</button><button class="ghost" data-a="e">Editar</button><button class="ghost" data-a="d">Eliminar</button></div>'+
       '</article>';
   }).join('');
 }
@@ -248,11 +267,39 @@ document.getElementById('list').addEventListener('click',function(e){
   var it=items.filter(function(i){return i.id===id})[0];
   if(b.dataset.a==='d'){remove(id)}
   else if(it&&b.dataset.a==='t'){put(setRun(it,!norm(it).running))}
+  else if(it&&b.dataset.a==='e'){openEdit(it)}
   else if(it){openRestock(it)}
 });
 function setAll(run){items.filter(inArea).forEach(function(it){if(!!norm(it).running!==run)put(setRun(it,run))})}
 document.getElementById('startAll').addEventListener('click',function(){setAll(true)});
 document.getElementById('pauseAll').addEventListener('click',function(){setAll(false)});
+var eid=null,eCur=0,eAvail0='';
+document.getElementById('earea').innerHTML=AREAS.map(function(a){return '<option value="'+a[0]+'">'+a[1]+'</option>'}).join('');
+function openEdit(it){
+  var n=norm(it),c=calc(n,Date.now()),f=document.getElementById('ef').elements;
+  eid=it.id;eCur=Math.max(0,c.rem/n.cycle);
+  f.name.value=n.name;f.part.value=n.part;f.cycle.value=n.cycle;f.ppb.value=n.ppb;f.boxes.value=n.boxes;
+  f.reorder.value=n.reorder;f.unit.value=n.unit||'cajas';f.area.value=n.area||'doortrim';
+  f.avail.value=Math.ceil(eCur-1e-9);eAvail0=f.avail.value;
+  document.getElementById('eerr').textContent='';
+  document.getElementById('em').hidden=false;f.name.focus();
+}
+function closeEdit(){document.getElementById('em').hidden=true;eid=null}
+document.getElementById('ecancel').addEventListener('click',closeEdit);
+document.getElementById('em').addEventListener('click',function(e){if(e.target===this)closeEdit()});
+document.getElementById('ef').addEventListener('submit',function(e){
+  e.preventDefault();
+  var it=items.filter(function(i){return i.id===eid})[0];if(!it){closeEdit();return}
+  var f=e.target.elements,n=norm(it),now=Date.now(),err=document.getElementById('eerr');
+  var name=f.name.value.trim(),part=f.part.value.trim();
+  var cycle=parseFloat(f.cycle.value),ppb=parseInt(f.ppb.value,10),boxes=parseInt(f.boxes.value,10),reorder=parseInt(f.reorder.value,10);
+  if(!name||!part||!(cycle>0)||!(ppb>=1)||!(boxes>=1)||!(reorder>=0)){err.textContent='Revisa que todos los campos tengan un valor válido.';return}
+  var av=f.avail.value===eAvail0?eCur:Math.max(0,parseFloat(f.avail.value)||0);
+  av=Math.round(av*1000)/1000;
+  put(Object.assign({},n,{name:name,part:part,cycle:cycle,ppb:ppb,boxes:boxes,reorder:reorder,unit:f.unit.value,area:f.area.value,
+    stock0:av,full:Math.max(av,boxes*ppb),elapsed:0,since:n.running?now:null}));
+  closeEdit();
+});
 var rid=null;
 function openRestock(it){
   var n=norm(it),p=pcs(calc(n,Date.now()),n),f=document.getElementById('rf').elements;
@@ -266,7 +313,7 @@ function openRestock(it){
 function closeRestock(){document.getElementById('rm').hidden=true;rid=null}
 document.getElementById('rcancel').addEventListener('click',closeRestock);
 document.getElementById('rm').addEventListener('click',function(e){if(e.target===this)closeRestock()});
-document.addEventListener('keydown',function(e){if(e.key==='Escape')closeRestock()});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeRestock();closeEdit()}});
 document.getElementById('rf').addEventListener('submit',function(e){
   e.preventDefault();
   var it=items.filter(function(i){return i.id===rid})[0];if(!it){closeRestock();return}
