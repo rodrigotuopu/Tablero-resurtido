@@ -90,7 +90,8 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <label class="wide">Material de la lista<select id="mat"><option value="">— Elegir de la lista —</option></select></label>
 <label>Nombre de la pieza<input name="name" required placeholder="Soporte frontal"></label>
 <label>Número de parte<input name="part" required placeholder="PN-10234"></label>
-<label>Tiempo de ciclo (seg/pieza)<input name="cycle" type="number" min="0.1" step="any" required placeholder="45"></label>
+<label>Tiempo de ciclo (seg)<input name="cycle" type="number" min="0.1" step="any" required placeholder="45"></label>
+<label>Piezas usadas por ciclo<input name="use" type="number" min="0.01" step="any" value="1" required></label>
 <label>Cajas por resurtido (estándar)<input name="boxes" type="number" min="1" step="1" required placeholder="10"></label>
 <label>Piezas por caja<input name="ppb" type="number" min="1" step="1" required placeholder="50"></label>
 <label>Punto de reorden<input name="reorder" type="number" min="0" step="1" required placeholder="2"></label>
@@ -106,7 +107,8 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <form id="mf">
 <label>Nombre del material<input name="name" required placeholder="Soporte frontal"></label>
 <label>Número de parte<input name="part" required placeholder="PN-10234"></label>
-<label>Ciclo (seg/pieza), opcional<input name="cycle" type="number" min="0.1" step="any"></label>
+<label>Ciclo (seg), opcional<input name="cycle" type="number" min="0.1" step="any"></label>
+<label>Piezas usadas por ciclo, opcional<input name="use" type="number" min="0.01" step="any"></label>
 <label>Piezas por caja, opcional<input name="ppb" type="number" min="1" step="1"></label>
 <label>Punto de reorden, opcional<input name="reorder" type="number" min="0" step="1"></label>
 <label>Unidad del reorden<select name="unit"><option value="cajas">Cajas</option><option value="piezas">Piezas</option></select></label>
@@ -141,7 +143,8 @@ select{font:inherit;font-size:16px;color:var(--ink);background:var(--bg);border:
 <label>Nombre de la pieza<input name="name" required></label>
 <label>Número de parte<input name="part" required></label>
 <div class="two">
-<label>Ciclo (seg/pieza)<input name="cycle" type="number" min="0.1" step="any" required></label>
+<label>Ciclo (seg)<input name="cycle" type="number" min="0.1" step="any" required></label>
+<label>Piezas usadas por ciclo<input name="use" type="number" min="0.01" step="any" required></label>
 <label>Piezas por caja<input name="ppb" type="number" min="1" step="1" required></label>
 <label>Cajas por resurtido<input name="boxes" type="number" min="1" step="1" required></label>
 <label>Punto de reorden<input name="reorder" type="number" min="0" step="1" required></label>
@@ -201,13 +204,14 @@ function used(it,now){
   var n=norm(it);
   return ((n.elapsed||0)+(n.running?now-n.since:0))/1000;
 }
-function pcs(c,it){return Math.max(0,Math.ceil(c.rem/it.cycle-1e-9))}
+function cyc(it){return it.cycle/(it.use||1)}
+function pcs(c,it){return Math.max(0,Math.ceil(c.rem/cyc(it)-1e-9))}
 function calc(it,now){
-  var boxSec=it.ppb*it.cycle, S0=it.stock0!=null?it.stock0:it.boxes*it.ppb;
-  var total=Math.max(S0,it.full||0)*it.cycle;
-  var rem=Math.max(0,S0*it.cycle-used(it,now));
+  var boxSec=it.ppb*cyc(it), S0=it.stock0!=null?it.stock0:it.boxes*it.ppb;
+  var total=Math.max(S0,it.full||0)*cyc(it);
+  var rem=Math.max(0,S0*cyc(it)-used(it,now));
   var left=Math.ceil(rem/boxSec-1e-9);
-  var rs=(it.unit==='piezas'?it.reorder:it.reorder*it.ppb)*it.cycle;
+  var rs=(it.unit==='piezas'?it.reorder:it.reorder*it.ppb)*cyc(it);
   var st=rem<=0?'bad':(rem<=rs+1e-9?'warn':'ok');
   return {boxSec:boxSec,total:total,rem:rem,left:left,st:st,toReorder:Math.max(0,rem-rs)};
 }
@@ -243,7 +247,7 @@ function render(){
       '<div class="body"><h2 class="name">'+esc(it.name)+'</h2><p class="part">'+esc(it.part)+'</p>'+
       '<div class="time">'+fmt(c.rem)+'</div>'+
       '<div class="meta">'+line+'</div>'+
-      '<div class="meta">'+'Quedan '+pcs(c,it)+' pzas ('+Math.floor(pcs(c,it)/it.ppb)+' cajas'+(pcs(c,it)%it.ppb?' + '+(pcs(c,it)%it.ppb)+' pzas':'')+') · '+it.ppb+' pzas/caja · ciclo '+it.cycle+' s · reorden a '+it.reorder+(it.unit==='piezas'?' piezas':' cajas')+'</div>'+
+      '<div class="meta">'+'Quedan '+pcs(c,it)+' pzas ('+Math.floor(pcs(c,it)/it.ppb)+' cajas'+(pcs(c,it)%it.ppb?' + '+(pcs(c,it)%it.ppb)+' pzas':'')+') · '+it.ppb+' pzas/caja · ciclo '+it.cycle+' s'+((it.use||1)>1?' · usa '+it.use+' pzas/ciclo':'')+' · reorden a '+it.reorder+(it.unit==='piezas'?' piezas':' cajas')+'</div>'+
       '<div class="bar"><i style="width:'+pct+'%"></i></div></div>'+
       '<div class="acts"><button data-a="t">'+(run?'Pausar':'Iniciar')+'</button><button class="ghost" data-a="r">Resurtido listo</button><button class="ghost" data-a="e">Editar</button><button class="ghost" data-a="d">Eliminar</button></div>'+
       '</article>';
@@ -254,10 +258,10 @@ document.getElementById('f').addEventListener('submit',function(e){
   e.preventDefault();
   var f=e.target,v=function(k){return f.elements[k].value};
   var from=document.getElementById('mat').value;
-  var o={name:v('name').trim(),part:v('part').trim(),cycle:parseFloat(v('cycle')),boxes:parseInt(v('boxes'),10),ppb:parseInt(v('ppb'),10),reorder:parseInt(v('reorder'),10),unit:v('unit')};
+  var o={name:v('name').trim(),part:v('part').trim(),cycle:parseFloat(v('cycle')),use:parseFloat(v('use'))||1,boxes:parseInt(v('boxes'),10),ppb:parseInt(v('ppb'),10),reorder:parseInt(v('reorder'),10),unit:v('unit')};
   var ab=v('availBoxes'),al=v('availLoose'),full=o.boxes*o.ppb;
   var stock=(ab===''&&al==='')?full:(parseInt(ab,10)||0)*o.ppb+(parseInt(al,10)||0);
-  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),area:area,name:o.name,part:o.part,cycle:o.cycle,boxes:o.boxes,ppb:o.ppb,reorder:o.reorder,unit:o.unit,stock0:stock,full:Math.max(stock,full),elapsed:0,running:false,since:null});
+  put({id:Date.now()+'-'+Math.random().toString(36).slice(2,6),area:area,name:o.name,part:o.part,cycle:o.cycle,use:o.use,boxes:o.boxes,ppb:o.ppb,reorder:o.reorder,unit:o.unit,stock0:stock,full:Math.max(stock,full),elapsed:0,running:false,since:null});
   if(f.elements.save.checked&&!from)saveMat(o);
   f.reset();
 });
@@ -277,8 +281,8 @@ var eid=null,eCur=0,eAvail0='';
 document.getElementById('earea').innerHTML=AREAS.map(function(a){return '<option value="'+a[0]+'">'+a[1]+'</option>'}).join('');
 function openEdit(it){
   var n=norm(it),c=calc(n,Date.now()),f=document.getElementById('ef').elements;
-  eid=it.id;eCur=Math.max(0,c.rem/n.cycle);
-  f.name.value=n.name;f.part.value=n.part;f.cycle.value=n.cycle;f.ppb.value=n.ppb;f.boxes.value=n.boxes;
+  eid=it.id;eCur=Math.max(0,c.rem/cyc(n));
+  f.name.value=n.name;f.part.value=n.part;f.cycle.value=n.cycle;f.use.value=n.use||1;f.ppb.value=n.ppb;f.boxes.value=n.boxes;
   f.reorder.value=n.reorder;f.unit.value=n.unit||'cajas';f.area.value=n.area||'doortrim';
   f.avail.value=Math.ceil(eCur-1e-9);eAvail0=f.avail.value;
   document.getElementById('eerr').textContent='';
@@ -292,11 +296,11 @@ document.getElementById('ef').addEventListener('submit',function(e){
   var it=items.filter(function(i){return i.id===eid})[0];if(!it){closeEdit();return}
   var f=e.target.elements,n=norm(it),now=Date.now(),err=document.getElementById('eerr');
   var name=f.name.value.trim(),part=f.part.value.trim();
-  var cycle=parseFloat(f.cycle.value),ppb=parseInt(f.ppb.value,10),boxes=parseInt(f.boxes.value,10),reorder=parseInt(f.reorder.value,10);
-  if(!name||!part||!(cycle>0)||!(ppb>=1)||!(boxes>=1)||!(reorder>=0)){err.textContent='Revisa que todos los campos tengan un valor válido.';return}
+  var cycle=parseFloat(f.cycle.value),use=parseFloat(f.use.value),ppb=parseInt(f.ppb.value,10),boxes=parseInt(f.boxes.value,10),reorder=parseInt(f.reorder.value,10);
+  if(!name||!part||!(cycle>0)||!(use>0)||!(ppb>=1)||!(boxes>=1)||!(reorder>=0)){err.textContent='Revisa que todos los campos tengan un valor válido.';return}
   var av=f.avail.value===eAvail0?eCur:Math.max(0,parseFloat(f.avail.value)||0);
   av=Math.round(av*1000)/1000;
-  put(Object.assign({},n,{name:name,part:part,cycle:cycle,ppb:ppb,boxes:boxes,reorder:reorder,unit:f.unit.value,area:f.area.value,
+  put(Object.assign({},n,{name:name,part:part,cycle:cycle,use:use,ppb:ppb,boxes:boxes,reorder:reorder,unit:f.unit.value,area:f.area.value,
     stock0:av,full:Math.max(av,boxes*ppb),elapsed:0,since:n.running?now:null}));
   closeEdit();
 });
@@ -320,7 +324,7 @@ document.getElementById('rf').addEventListener('submit',function(e){
   var f=e.target.elements,n=norm(it),mode=f.rmode.value;
   var add=(parseInt(f.rcajas.value,10)||0)*n.ppb+(parseInt(f.rloose.value,10)||0);
   if(mode==='add'&&add<=0){document.getElementById('rerr').textContent='Escribe cuántas cajas o piezas llegaron.';return}
-  var now=Date.now(),c=calc(n,now),ns=Math.round(((mode==='add'?c.rem/n.cycle:0)+add)*1000)/1000;
+  var now=Date.now(),c=calc(n,now),ns=Math.round(((mode==='add'?c.rem/cyc(n):0)+add)*1000)/1000;
   put(Object.assign({},n,{stock0:ns,full:Math.max(ns,n.boxes*n.ppb),elapsed:0,since:n.running?now:null}));
   closeRestock();
 });
@@ -332,19 +336,19 @@ function renderMats(){
   if(ms.some(function(m){return m.id===prev}))sel.value=prev;
   document.getElementById('mcount').textContent=ms.length;
   document.getElementById('mlist').innerHTML=ms.length?ms.map(function(m){
-    return '<div class="mrow"><span><b>'+esc(m.name)+'</b> · '+esc(m.part)+(m.cycle?' · ciclo '+m.cycle+' s':'')+(m.ppb?' · '+m.ppb+' pzas/caja':'')+'</span><button class="ghost" data-m="'+esc(m.id)+'">Quitar</button></div>';
+    return '<div class="mrow"><span><b>'+esc(m.name)+'</b> · '+esc(m.part)+(m.cycle?' · ciclo '+m.cycle+' s':'')+(m.use>1?' · '+m.use+' pzas/ciclo':'')+(m.ppb?' · '+m.ppb+' pzas/caja':'')+'</span><button class="ghost" data-m="'+esc(m.id)+'">Quitar</button></div>';
   }).join(''):'<p class="meta">Sin materiales todavía en '+esc(areaName())+'.</p>';
 }
 function saveMat(o){
   var ex=mats.filter(function(m){return m.area===area&&m.part.toLowerCase()===o.part.toLowerCase()})[0];
   var id=ex?ex.id:Date.now()+'-'+Math.random().toString(36).slice(2,6);
-  var doc={id:id,area:area,name:o.name,part:o.part,cycle:num(o.cycle),ppb:num(o.ppb),reorder:num(o.reorder),unit:o.unit||'cajas'};
+  var doc={id:id,area:area,name:o.name,part:o.part,cycle:num(o.cycle),use:num(o.use),ppb:num(o.ppb),reorder:num(o.reorder),unit:o.unit||'cajas'};
   if(!matCol){setNote('Aún no hay conexión con la lista de materiales.');return Promise.resolve()}
   return matCol.doc(id).set(doc).catch(fail);
 }
 document.getElementById('mf').addEventListener('submit',function(e){
   e.preventDefault();var f=e.target,v=function(k){return f.elements[k].value};
-  saveMat({name:v('name').trim(),part:v('part').trim(),cycle:v('cycle'),ppb:v('ppb'),reorder:v('reorder'),unit:v('unit')});
+  saveMat({name:v('name').trim(),part:v('part').trim(),cycle:v('cycle'),use:v('use'),ppb:v('ppb'),reorder:v('reorder'),unit:v('unit')});
   f.reset();
 });
 document.getElementById('bulkBtn').addEventListener('click',function(){
@@ -369,6 +373,7 @@ document.getElementById('mat').addEventListener('change',function(e){
   var f=document.getElementById('f').elements;
   f.name.value=m.name;f.part.value=m.part;
   if(m.cycle)f.cycle.value=m.cycle;
+  if(m.use)f.use.value=m.use;
   if(m.ppb)f.ppb.value=m.ppb;
   if(m.reorder!=null)f.reorder.value=m.reorder;
   if(m.unit)f.unit.value=m.unit;
